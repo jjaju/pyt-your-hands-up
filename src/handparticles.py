@@ -61,22 +61,40 @@ while True:
     lm_list_right, lm_list_left = detector.find_landmark_positions(img)
     
     if detector.right_left[0] and len(lm_list_right) > 0:
-        right_index_tip_pos = np.array(lm_list_right[detector.mp_hands.HandLandmark.INDEX_FINGER_TIP][1:])
+        right_index_tip_pos = np.array(
+            lm_list_right[detector.mp_hands.HandLandmark.INDEX_FINGER_TIP][1:]
+        )
         hand_speed = right_index_tip_pos - last_right_index_tip_pos
         last_right_index_tip_pos = right_index_tip_pos
-
-        particle_system.update(right_index_tip_pos, hand_speed, use_collider=True) 
-    
+        particle_system.update(
+            right_index_tip_pos, 
+            hand_speed, 
+            use_collider=True
+        ) 
     else:
         particle_system.update(use_collider=False)
 
     for particle in particle_system.particles:
-        cv2.circle(img, particle.pos.astype(int), particle.radius, particle.color, cv2.FILLED)
+        cv2.circle(
+            img, 
+            particle.pos.astype(int), 
+            particle.radius, 
+            particle.color, 
+            cv2.FILLED
+        )
 
     current_time = time.time()
     fps = 1 / (current_time - previous_time)
     previous_time = current_time
 
-    cv2.putText(img, str(int(fps)), (10, 20), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+    cv2.putText(
+        img, 
+        str(int(fps)), 
+        (10, 20), 
+        cv2.FONT_HERSHEY_PLAIN, 
+        1, 
+        (255, 255, 255), 
+        1
+    )
     cv2.imshow("Bubbles", img)
     cv2.waitKey(1)
