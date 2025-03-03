@@ -1,145 +1,109 @@
+import time
+from pathlib import Path
+from typing import List
+
 import cv2
 import mediapipe as mp
-import time
 import numpy as np
-from typing import Tuple, List
+from mediapipe import solutions
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe.tasks.python.core.base_options import BaseOptions
+from mediapipe.tasks.python.vision.core.vision_task_running_mode import (
+    VisionTaskRunningMode,
+)
+from mediapipe.tasks.python.vision.hand_landmarker import (
+    HandLandmark,
+    HandLandmarker,
+    HandLandmarkerOptions,
+    HandLandmarkerResult,
+)
 
 
-class HandDetector():
+class HandDetector:
     def __init__(
         self,
-        static_image_mode=False,
-        max_num_hands=2,
-        model_complexity=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+        model_path: str,
+        running_mode=VisionTaskRunningMode.LIVE_STREAM,
+        num_hands=1,
+        min_hand_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
     ) -> None:
-        self.static_image_mode = static_image_mode
-        self.max_num_hands = max_num_hands
-        self.model_complexity = model_complexity
-        self.min_detection_confidence = min_detection_confidence
-        self.min_tracking_confidence = min_tracking_confidence
-        self.mp_hands = mp.solutions.mediapipe.python.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            self.static_image_mode,
-            self.max_num_hands,
-            self.model_complexity,
-            self.min_detection_confidence,
-            self.min_tracking_confidence
+        options = HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=Path(model_path)),
+            running_mode=running_mode,
+            result_callback=self.return_result,
+            num_hands=num_hands,
+            min_hand_detection_confidence=min_hand_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
         )
-        self.mp_draw = mp.solutions.mediapipe.python.solutions.drawing_utils
+        self.landmarker = HandLandmarker.create_from_options(options)
+        self.hand_landmark = HandLandmark
+        self.latest_detection = None
 
-        # mediapipe landmark indices for finger tips
-        self.tip_ids = [4, 8, 12, 16, 20]
+    def return_result(
+        self,
+        result: HandLandmarkerResult,
+        output_image: mp.Image,
+        timestamp_ms: int,
+    ) -> None:
+        self.latest_detection = result
 
-    def find_hands(self, img: np.ndarray, draw=True) -> np.ndarray:
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        self.results = self.hands.process(img_rgb)
-        self.right_left = []
+    def detect(self, img: np.ndarray) -> HandLandmarkerResult | None:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img)
+        timestamp = int(round(time.time() * 1000))
+        self.landmarker.detect_async(mp_image, timestamp)
+        return self.latest_detection
 
-        if(self.results.multi_hand_landmarks):
-            hands_temp = []
-            for hand in self.results.multi_handedness:
-                hands_temp.append(hand.classification[0].label)
+    def get_landmark_positions(
+        self, detection_result: HandLandmarkerResult
+    ) -> List:
+        landmarks = []
+        if len(detection_result.hand_landmarks) <= 0:
+            return landmarks
 
-            self.right_left.append("Right" in hands_temp)
-            self.right_left.append("Left" in hands_temp)
+        for l, landmark in enumerate(detection_result.hand_landmarks[0]):
+            landmarks.append([l, landmark.x, landmark.y])
 
-            if draw:
-                for hand_lms in self.results.multi_hand_landmarks:
-                    self.mp_draw.draw_landmarks(
-                        img,
-                        hand_lms,
-                        self.mp_hands.HAND_CONNECTIONS
-                    )
-        else:
-            self.right_left = [False, False]
+        return landmarks
 
-        return img
-
-    def find_landmark_positions(self, img: np.ndarray) -> Tuple[List, List]:
+    def transform_landmark_positions_to_image(
+        self, landmarks: List, img: np.ndarray
+    ) -> List:
         h, w, _ = img.shape
-        self.lm_list_right = []
-        self.lm_list_left = []
+        transformed_landmarks = [
+            [l, int(x * w), int(y * h)] for l, x, y in landmarks
+        ]
+        return transformed_landmarks
 
-        if self.results.multi_handedness:
-            for hand_index, hand in enumerate(self.results.multi_handedness):
-                if hand.classification[0].label == "Right":
-                    temp_list = self.lm_list_right
-                else:
-                    temp_list = self.lm_list_left
-
-                lms = self.results.multi_hand_landmarks[hand_index].landmark
-                for id, lm in enumerate(lms):
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    temp_list.append([id, cx, cy])
-
-        return self.lm_list_right, self.lm_list_left
-
-    def fingers_extended(self, hand: str) -> List:
-        fingers = []
-
-        # Thumb: horizontal test, depends on type of hand (left or right)
-        if hand == "Right":
-            search_list = self.lm_list_right
-            if (
-                search_list[self.tip_ids[0]][1] <
-                search_list[self.tip_ids[0] - 2][1]
-            ):
-                fingers.append(1)
-            else:
-                fingers.append(0)
-        else:
-            search_list = self.lm_list_left
-            if (
-                search_list[self.tip_ds[0]][1] >
-                search_list[self.tip_ids[0] - 2][1]
-            ):
-                fingers.append(1)
-            else:
-                fingers.append(0)
-
-        # Other fingers: vertical test
-        for id in range(1, 5):
-            if (
-                search_list[self.tip_ids[id]][2] <
-                search_list[self.tip_ids[id] - 2][2]
-            ):
-                fingers.append(1)
-            else:
-                fingers.append(0)
-
-        return fingers
-
-
-def main():
-    previous_time = 0
-
-    cap = cv2.VideoCapture(0)
-    detector = HandDetector()
-
-    while True:
-        success, img = cap.read()
-        img = cv2.flip(img, 1)
-
-        img = detector.find_hands(img)
-        lm_list_right, lm_list_left = detector.find_landmark_positions(img)
-
-        current_time = time.time()
-        fps = 1 / (current_time - previous_time)
-        previous_time = current_time
-
-        cv2.putText(
-            img,
-            str(int(fps)), (10, 20),
-            cv2.FONT_HERSHEY_PLAIN,
-            1,
-            (255, 255, 255),
-            1
+    def draw_landmarks(
+        self, img: np.ndarray, detection_result: HandLandmarkerResult
+    ) -> np.ndarray:
+        hand_landmarks_list = (
+            detection_result.hand_landmarks if detection_result else []
         )
-        cv2.imshow("Hand Detection", img)
-        cv2.waitKey(1)
+        annotated_image = np.copy(img)
 
+        # Loop through the detected hands to visualize.
+        for idx in range(len(hand_landmarks_list)):
+            hand_landmarks = hand_landmarks_list[idx]
 
-if __name__ == "__main__":
-    main()
+            # Draw the hand landmarks.
+            hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+            hand_landmarks_proto.landmark.extend(
+                [
+                    landmark_pb2.NormalizedLandmark(
+                        x=landmark.x, y=landmark.y, z=landmark.z
+                    )
+                    for landmark in hand_landmarks
+                ]
+            )
+            solutions.drawing_utils.draw_landmarks(
+                annotated_image,
+                hand_landmarks_proto,
+                solutions.hands.HAND_CONNECTIONS,
+                solutions.drawing_styles.get_default_hand_landmarks_style(),
+                solutions.drawing_styles.get_default_hand_connections_style(),
+            )
+
+        return annotated_image

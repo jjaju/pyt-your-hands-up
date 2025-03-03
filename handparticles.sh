@@ -1,0 +1,14 @@
+python src/handparticles.py \
+--n_particles 50 \
+--p_min_radius 10 \
+--p_max_radius 50 \
+--p_min_start_speed 3 \
+--p_max_start_speed 5 \
+--p_max_speed 20 \
+--collision_radius_threshold 10 \
+--collision_speed_threshold 3 \
+--bounce 1.1 \
+--p_speed_decay_factor 0.98 \
+--resolution_factor 1 \
+--model_path "D:/mediapipe_models/hand_landmarker.task" \
+# --draw_hand \
